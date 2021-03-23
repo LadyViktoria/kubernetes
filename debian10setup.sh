@@ -25,10 +25,8 @@ echo "deb [signed-by=/usr/share/keyrings/crio.gpg] http://download.opensuse.org/
 
 sudo apt update
 sudo apt -y upgrade
-sudo apt -y install vim nano git curl wget kubelet kubeadm kubectl
 sudo apt-get -y -t buster-backports install libseccomp2
-sudo apt-get -y install cri-o cri-o-runc
-sudo apt-mark hold kubelet kubeadm kubectl
+sudo apt -y install vim nano git curl wget kubelet kubeadm kubectl cri-o cri-o-runc
 
 sudo systemctl daemon-reload
 sudo systemctl enable crio kubelet
