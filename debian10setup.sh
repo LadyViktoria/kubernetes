@@ -1,11 +1,14 @@
+#disable swap
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 sudo swapoff -a
 
+#add kernel modules
 sudo tee /etc/modules-load.d/kubernetes.conf<<EOF
 br_netfilter
 overlay
 EOF
 
+#setup network bridge
 sudo tee /etc/sysctl.d/kubernetes.conf<<EOF
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
@@ -13,11 +16,17 @@ net.ipv4.ip_forward = 1
 EOF
 sudo sysctl --system
 
+## Install CRI-O & Kubernetes
+#set CRI-O & OS version
+#crio repo muss zur kubeadm version passen
 VERSION=1.20
 OS=Debian_10
+#add kubernetes repo
 sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
 sudo echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+# add backports repo
 sudo echo "deb http://deb.debian.org/debian buster-backports main" | sudo tee /etc/apt/sources.list.d/backports.list
+# add CRI-O repo
 sudo curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/Release.key | sudo apt-key --keyring /usr/share/keyrings/crio.gpg add -
 sudo echo "deb [signed-by=/usr/share/keyrings/crio.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
 sudo echo "deb [signed-by=/usr/share/keyrings/crio.gpg] http://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/$VERSION/$OS/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.list
@@ -30,8 +39,10 @@ sudo apt -y install vim nano git curl wget kubelet kubeadm kubectl cri-o cri-o-r
 sudo systemctl daemon-reload
 sudo systemctl enable crio kubelet
 
+#kublet config
 sudo echo 'KUBELET_EXTRA_ARGS=--feature-gates="AllAlpha=false,RunAsGroup=true" --container-runtime=remote --container-runtime-endpoint='unix:///var/run/crio/crio.sock' --runtime-request-timeout=10m --cgroup-driver="systemd"' | sudo tee /etc/default/kubelet
 
 sudo systemctl restart crio kubelet
+#pull kubernetes images
 sudo kubeadm config images pull
 sudo systemctl reboot
