@@ -1,4 +1,4 @@
-#disable swap
+disable swap
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
 sudo swapoff -a
 sudo modprobe overlay
