@@ -1,0 +1,169 @@
+
+###########################
+#repeat steps on all nodes#
+###########################
+####################################################################################
+#disable swap
+sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+sudo swapoff -a
+
+#add kernel modules
+sudo tee /etc/modules-load.d/kubernetes.conf<<EOF
+br_netfilter
+overlay
+EOF
+
+#setup network bridge
+sudo tee /etc/sysctl.d/kubernetes.conf<<EOF
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+sudo sysctl --system
+
+## Install CRI-O & Kubernetes
+#set CRI-O & OS version
+#crio repo muss zur kubeadm version passen
+VERSION=1.20
+OS=Debian_10
+#add kubernetes repo
+sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
+sudo echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+# add backports repo
+sudo echo "deb http://deb.debian.org/debian buster-backports main" | sudo tee /etc/apt/sources.list.d/backports.list
+# add CRI-O repo
+sudo curl -L https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/Release.key | sudo apt-key --keyring /usr/share/keyrings/crio.gpg add -
+sudo echo "deb [signed-by=/usr/share/keyrings/crio.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+sudo echo "deb [signed-by=/usr/share/keyrings/crio.gpg] http://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/$VERSION/$OS/ /" | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.list
+
+sudo apt update
+sudo apt -y upgrade
+sudo apt-get -y -t buster-backports install libseccomp2
+sudo apt -y install vim nano git curl wget kubelet kubeadm kubectl cri-o cri-o-runc
+
+sudo systemctl daemon-reload
+sudo systemctl enable crio kubelet
+
+#kublet config
+sudo echo 'KUBELET_EXTRA_ARGS=--feature-gates="AllAlpha=false,RunAsGroup=true" --container-runtime=remote --container-runtime-endpoint='unix:///var/run/crio/crio.sock' --runtime-request-timeout=10m --cgroup-driver="systemd"' | sudo tee /etc/default/kubelet
+
+sudo systemctl restart crio kubelet
+#pull kubernetes images
+sudo kubeadm config images pull
+sudo systemctl reboot
+##################################
+#repeat steps above for all nodes#
+##################################
+####################################################################################
+
+
+###################################
+#init master node aka controlplane#
+###################################
+
+sudo kubeadm init --control-plane-endpoint xxx.xxx.xxx.xxx:6443 <<da kommt die LB ip rein --cri-socket=unix:///var/run/crio/crio.sock --pod-network-cidr=10.10.0.0/16 --upload-certs << für High Availability
+
+#2nd controlpane
+#on 2nd plane execute
+sudo kubeadm config images pull
+#on 1 execute
+sudo kubeadm certs certificate-key
+#add keys to command
+
+#on 2nd plane 	
+sudo kubeadm join xxx.xxx.xxx.xxx:6443 \ #external loadbalancer ip
+	--token asdfghjklö \
+    --discovery-token-ca-cert-hash sha256:12345678asdf \
+	--control-plane \
+	--certificate-key asdfghjqwertz
+
+
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+#############################
+#join cluster as worker node#
+#############################
+
+#create new token on controlplane
+kubeadm token create --print-join-command
+
+#command for nodes to join cluster
+sudo kubeadm join xxx.xxx.xxx.xxx:6443 --token asdfghjkl --discovery-token-ca-cert-hash sha256:123456789asdf
+
+#setup names for the nodes on controlplane
+kubectl label node <hostname> kubernetes.io/role=worker1
+kubectl label node <hostname> kubernetes.io/role=worker2
+
+kubectl label node kubenode01 kubernetes.io/role=worker1
+kubectl label node kubenode02 kubernetes.io/role=worker2
+kubectl label node kubenode03 kubernetes.io/role=worker3
+
+###############
+#install a cni#
+###############
+
+#https://kubernetes.io/de/docs/concepts/cluster-administration/addons/
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+#or 
+kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+
+#################
+#useful commands#
+#################
+
+kubectl get nodes -o wide
+kubectl get secret,sa,role,rolebinding,services,deployments
+kubectl get all --all-namespaces
+kubectl get pods --all-namespaces
+kubectl get svc
+kubectl describe pods test-node1
+kubectl describe svc test-node1-service
+
+
+##################################
+#install dashboad on controlplane#
+##################################
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.2.0/aio/deploy/recommended.yaml
+
+#setup admin account
+kubectl create serviceaccount dashboard-admin-sa
+#Next bind the dashboard-admin-service-account service account to the cluster-admin role
+kubectl create clusterrolebinding dashboard-admin-sa --clusterrole=cluster-admin --serviceaccount=default:dashboard-admin-sa
+#List secrets using:
+kubectl get secrets
+#get access token
+kubectl describe secret dashboard-admin-sa-token-c8kpc
+
+##############
+#install helm#
+##############
+
+curl https://baltocdn.com/helm/signing.asc | sudo apt-key add -
+sudo apt-get install apt-transport-https --yes
+echo "deb https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update
+sudo apt-get install helm
+
+#################
+#install haproxy#
+#################
+
+helm repo add haproxytech https://haproxytech.github.io/helm-charts
+helm repo update
+helm install haproxy haproxytech/kubernetes-ingress
+
+#######################
+#install ingress-nginx#
+#######################
+
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx --set rbac.create=true
+#add external lb ip if service is in loadbalancer mode
+kubectl patch svc ingress-nginx-controller -n default -p '{"spec": {"type": "LoadBalancer", "externalIPs":["xxx.xxx.xxx.xxx"]}}'
+
+
+cd ~ && wget -N https://raw.githubusercontent.com/LadyViktoria/kubernetes/main/debian10setup.sh && bash debian10setup.sh
