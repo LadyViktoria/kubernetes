@@ -1,0 +1,52 @@
+kubectl describe pods test-node1
+kubectl describe svc test-node1-service
+
+kubectl get pods --all-namespaces
+kubectl get svc
+#########################################################################
+node1deployment.yaml
+kubectl apply -f node1deployment.yaml
+kubectl rollout restart deployment test-node1
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-node1
+  labels:
+    app: test-node1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-node1
+  template:
+    metadata:
+      labels:
+        app: test-node1
+    spec:
+      containers:
+      - name: test-node1
+        image: ladyviktoria/website1:1
+		env:
+        - name: HELLOWORLD
+          value: "test"
+		imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+		
+############################################################		
+nodeservice1.yaml
+kubectl apply -f nodeservice1.yaml		
+		
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-node1-service
+spec:
+  selector:
+    app: test-node1
+  type: NodePort
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
